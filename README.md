@@ -1,0 +1,1 @@
+Semangat, Berjuang, Sukses
