@@ -2,6 +2,9 @@ Mulai()
 frameCenter = 0.5 * frame.shape
 perintah_sebelumnya = "lurus"
 
+i = 0
+batas_hilang = 30
+
 while true :
     baca_frame_kamera()
 
@@ -39,8 +42,13 @@ while true :
         else :
             perintah_sebelumnya
     elif no_ball : 
-        berhenti()
-        break
+        i = i + 1
+
+        if i >= batas_hilang
+            berhenti()
+            break
+        else :
+        jalankan(perintah_sebelumnya)
 
     else :
         jalankan(perintah_sebelumnya)
