@@ -1,0 +1,47 @@
+Mulai() 
+frameCenter = 0.5 * frame.shape
+perintah_sebelumnya = "lurus"
+
+while true :
+    baca_frame_kamera()
+
+    if red_X & green_X :
+        center = (green_X + red_X) / 2
+        
+        if center < frameCenter :
+            kiri()
+            perintah_sebelumnya = "kiri"
+        elif center > frameCenter :
+            kanan()
+            perintah_sebelumnya = "kanan"
+        else :
+            lurus()
+            perintah_sebelumnya = "lurus"
+
+    elif red_X :
+        kanan()
+        perintah_sebelumnya = "kanan"
+
+    elif green_X :
+        kiri()
+        perintah_sebelumnya = "kiri"
+
+    elif black_X :
+
+        if black_X <= 0.75 * frameCenter :
+            kiri()
+            perintah_sebelumnya = "kiri"
+        elif green_X :
+            kiri()
+        elif black_X >= 0.75 * frameCenter :
+            kanan()
+            perintah_sebelumnya = "kanan"
+        else :
+            prevCommand
+
+    elif no_ball : 
+        berhenti()
+        break
+
+    else :
+        jalankan(prevCommand)
