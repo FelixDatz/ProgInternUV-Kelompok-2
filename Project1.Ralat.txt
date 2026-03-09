@@ -28,7 +28,7 @@ while true :
 
     elif black_X :
 
-        if black_X <= 0.75 * frameCenter :
+        if black_X < 0.75 * frameCenter :
             kiri()
             perintah_sebelumnya = "kiri"
         elif green_X :
@@ -37,11 +37,10 @@ while true :
             kanan()
             perintah_sebelumnya = "kanan"
         else :
-            prevCommand
-
+            perintah_sebelumnya
     elif no_ball : 
         berhenti()
         break
 
     else :
-        jalankan(prevCommand)
+        jalankan(perintah_sebelumnya)
