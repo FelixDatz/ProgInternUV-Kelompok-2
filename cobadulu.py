@@ -12,7 +12,7 @@ model = YOLO("best.pt")
 # CAMERA SETUP
 # ==============================
 
-cap = cv2.VideoCapture(0)
+cap = cv2.VideoCapture(2)
 # cap = cv2.VideoCapture("http://192.168.0.107:8080/video")
 
 # ==============================
@@ -167,10 +167,10 @@ while True:
         if gate_visible:
             path_center = (red_x + green_x) / 2
 
-            if path_center < frame_center - FRAME_CENTER_TOLERANCE:
+            if path_center > frame_center - FRAME_CENTER_TOLERANCE:
                 print("Gate → Go LEFT")
                 steering = PWM_LEFT
-            elif path_center > frame_center + FRAME_CENTER_TOLERANCE:
+            elif path_center < frame_center + FRAME_CENTER_TOLERANCE:
                 print("Gate → Go RIGHT")
                 steering = PWM_RIGHT
             else:
@@ -253,7 +253,7 @@ while True:
                     (10, 60), cv2.FONT_HERSHEY_SIMPLEX,
                     0.7, (200, 200, 200), 2)
 
-    cv2.imshow("USV Navigation", annotated)
+    cv2.imshow("Naval Cam", annotated)
 
     if cv2.waitKey(1) & 0xFF == ord('q'):
         break
