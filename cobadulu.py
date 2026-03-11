@@ -1,6 +1,7 @@
 import cv2
 from ultralytics import YOLO
 import numpy as np
+import time
 
 # ==============================
 # LOAD YOLO MODEL
@@ -12,35 +13,46 @@ model = YOLO("best.pt")
 # CAMERA SETUP
 # ==============================
 
-cap = cv2.VideoCapture(2)
-# cap = cv2.VideoCapture("http://192.168.0.107:8080/video")
+cap = cv2.VideoCapture(0)
 
 # ==============================
 # PARAMETERS
 # ==============================
 
-REAL_BALL_DIAMETER   = 20.0
-FOCAL_LENGTH         = 700
+REAL_BALL_DIAMETER     = 20.0
+FOCAL_LENGTH           = 700
 FRAME_CENTER_TOLERANCE = 40
 
-OBSTACLE_DISTANCE_THRESHOLD = 80    # cm, mulai circumnavigate
-ORBIT_RIGHT_ZONE     = 0.60         # bola hitam dianggap "sudah di kanan" jika ratio > ini
-ORBIT_KEEP_MIN       = 0.50         # batas minimum agar bola tetap terlihat di kanan
-ORBIT_KEEP_MAX       = 0.85         # batas maximum, jangan sampai terlalu ke tepi
+OBSTACLE_DISTANCE_THRESHOLD = 80
+ORBIT_RIGHT_ZONE     = 0.60
+ORBIT_KEEP_MIN       = 0.50
+ORBIT_KEEP_MAX       = 0.85
 
 PWM_LEFT   = 1400
 PWM_CENTER = 1500
 PWM_RIGHT  = 1600
 
+NO_DETECTION_TIMEOUT       = 5.0
+NO_DETECTION_ORBIT_TIMEOUT = 10.0
+ORBIT_CONFIRM_NEEDED       = 5
+
 # ==============================
 # STATE MACHINE
 # ==============================
 
-STATE_GATE           = "GATE"
-STATE_CIRC_START     = "CIRC_START"   # belok kiri dulu, dorong hitam ke kanan
-STATE_CIRC_ORBIT     = "CIRC_ORBIT"   # hitam sudah di kanan, orbit memutarinya
+STATE_GATE       = "GATE"
+STATE_CIRC_START = "CIRC_START"
+STATE_CIRC_ORBIT = "CIRC_ORBIT"
+STATE_SHUTDOWN   = "SHUTDOWN"
 
 nav_state = STATE_GATE
+
+# ==============================
+# INTERNAL COUNTERS
+# ==============================
+
+last_detection_time = time.time()
+orbit_confirm_count = 0
 
 # ==============================
 # AUTOPILOT CONTROL (dummy)
@@ -84,9 +96,11 @@ while True:
     annotated = results[0].plot()
     boxes = results[0].boxes
 
-    # Reset detections
+    # Reset detections — simpan x dan distance terdekat
     red_x          = None
+    red_distance   = 9999
     green_x        = None
+    green_distance = 9999
     black_x        = None
     black_distance = 9999
 
@@ -111,45 +125,76 @@ while True:
                     0.6, (255, 255, 255), 2)
 
         if name == "bola_merah":
-            red_x = x_center
+            if distance < red_distance:       # simpan hanya jika lebih dekat
+                red_x        = x_center
+                red_distance = distance
+
         elif name == "bola_hijau":
-            green_x = x_center
+            if distance < green_distance:     # simpan hanya jika lebih dekat
+                green_x        = x_center
+                green_distance = distance
+
         elif name == "bola_hitam":
-            if distance < black_distance:
+            if distance < black_distance:     # simpan hanya jika lebih dekat
+                black_x        = x_center
                 black_distance = distance
-                black_x = x_center
+
+    # ==============================
+    # UPDATE DETECTION TIMER
+    # ==============================
+
+    any_detected = (red_x is not None or green_x is not None or black_x is not None)
+
+    if any_detected:
+        last_detection_time = time.time()
+
+    time_since_detection = time.time() - last_detection_time
 
     # ==============================
     # STATE TRANSITION
     # ==============================
 
-    gate_visible     = (red_x is not None and green_x is not None)
-    obstacle_near    = (black_x is not None and black_distance < OBSTACLE_DISTANCE_THRESHOLD)
-    black_ratio      = (black_x / frame_width) if black_x is not None else None
+    gate_visible  = (red_x is not None and green_x is not None)
+    obstacle_near = (black_x is not None and black_distance < OBSTACLE_DISTANCE_THRESHOLD)
+    black_ratio   = (black_x / frame_width) if black_x is not None else None
 
-    if nav_state == STATE_GATE:
-        # Trigger circumnavigate jika hitam dekat & gate tidak lengkap
+    # Toleransi timeout berbeda per state
+    if nav_state == STATE_CIRC_ORBIT:
+        timeout_limit = NO_DETECTION_ORBIT_TIMEOUT
+    else:
+        timeout_limit = NO_DETECTION_TIMEOUT
+
+    # SHUTDOWN dicek paling pertama
+    if time_since_detection >= timeout_limit and nav_state != STATE_SHUTDOWN:
+        nav_state = STATE_SHUTDOWN
+        print(f">> STATE: SHUTDOWN (no detection for {time_since_detection:.1f}s)")
+
+    elif nav_state == STATE_GATE:
         if obstacle_near and not gate_visible:
+            orbit_confirm_count = 0
             nav_state = STATE_CIRC_START
-            print(">> STATE: CIRC_START (obstacle detected on left, turning left)")
+            print(">> STATE: CIRC_START (obstacle detected, turning left)")
 
     elif nav_state == STATE_CIRC_START:
-        # Transisi ke ORBIT ketika hitam sudah bergeser ke kanan frame
         if black_ratio is not None and black_ratio >= ORBIT_RIGHT_ZONE:
-            nav_state = STATE_CIRC_ORBIT
-            print(">> STATE: CIRC_ORBIT (black ball now on right, orbiting)")
-        # Kembali ke GATE jika gate terlihat lagi
-        elif gate_visible:
+            orbit_confirm_count += 1
+            if orbit_confirm_count >= ORBIT_CONFIRM_NEEDED:
+                nav_state = STATE_CIRC_ORBIT
+                orbit_confirm_count = 0
+                print(">> STATE: CIRC_ORBIT (black confirmed on right, orbiting)")
+        else:
+            orbit_confirm_count = 0
+
+        if gate_visible:
+            orbit_confirm_count = 0
             nav_state = STATE_GATE
             print(">> STATE: GATE (gate reacquired)")
 
     elif nav_state == STATE_CIRC_ORBIT:
-        # Kembali ke GATE jika gate terlihat / hitam sudah tidak terdeteksi
         if gate_visible:
             nav_state = STATE_GATE
             print(">> STATE: GATE (gate reacquired after orbit)")
         elif black_x is None:
-            # Hitam hilang dari frame saat orbit → lanjut cari gate
             nav_state = STATE_GATE
             print(">> STATE: GATE (black ball lost, resuming gate search)")
 
@@ -159,82 +204,76 @@ while True:
 
     steering = PWM_CENTER
 
-    # --------------------------------------------------
-    # STATE: GATE  →  navigasi normal merah-hijau
-    # --------------------------------------------------
     if nav_state == STATE_GATE:
 
         if gate_visible:
             path_center = (red_x + green_x) / 2
-
-            if path_center > frame_center - FRAME_CENTER_TOLERANCE:
-                print("Gate → Go LEFT")
+            if path_center < frame_center - FRAME_CENTER_TOLERANCE:
+                print(f"Gate → Go LEFT  (midpoint={int(path_center)}, red={int(red_distance)}cm, green={int(green_distance)}cm)")
                 steering = PWM_LEFT
-            elif path_center < frame_center + FRAME_CENTER_TOLERANCE:
-                print("Gate → Go RIGHT")
+            elif path_center > frame_center + FRAME_CENTER_TOLERANCE:
+                print(f"Gate → Go RIGHT (midpoint={int(path_center)}, red={int(red_distance)}cm, green={int(green_distance)}cm)")
                 steering = PWM_RIGHT
             else:
-                print("Gate → Go STRAIGHT")
+                print(f"Gate → STRAIGHT (midpoint={int(path_center)}, red={int(red_distance)}cm, green={int(green_distance)}cm)")
                 steering = PWM_CENTER
 
         elif red_x is not None:
-            print("Only Red → turn RIGHT")
+            print(f"Only Red ({int(red_distance)}cm) → turn RIGHT")
             steering = PWM_RIGHT
         elif green_x is not None:
-            print("Only Green → turn LEFT")
+            print(f"Only Green ({int(green_distance)}cm) → turn LEFT")
             steering = PWM_LEFT
         else:
             print("Searching gate...")
             steering = PWM_CENTER
 
-    # --------------------------------------------------
-    # STATE: CIRC_START  →  belok KIRI sampai hitam ke kanan
-    # --------------------------------------------------
     elif nav_state == STATE_CIRC_START:
         print(f"Circ Start → Steer LEFT (black @ {black_ratio:.2f})" if black_ratio else "Circ Start → Steer LEFT")
         steering = PWM_LEFT
 
-    # --------------------------------------------------
-    # STATE: CIRC_ORBIT  →  belok KANAN, jaga hitam di zona kanan
-    # --------------------------------------------------
     elif nav_state == STATE_CIRC_ORBIT:
-
         if black_ratio is not None:
             if black_ratio < ORBIT_KEEP_MIN:
-                # Hitam mulai keluar ke kiri → belok kiri sedikit untuk reacquire
-                print(f"Orbit: black drifting left ({black_ratio:.2f}) → adjust LEFT")
+                print(f"Orbit: drifting left ({black_ratio:.2f}) → adjust LEFT")
                 steering = PWM_LEFT
             elif black_ratio > ORBIT_KEEP_MAX:
-                # Terlalu ke tepi kanan → sedikit lurus
-                print(f"Orbit: black too far right ({black_ratio:.2f}) → STRAIGHT")
+                print(f"Orbit: too far right ({black_ratio:.2f}) → STRAIGHT")
                 steering = PWM_CENTER
             else:
-                # Zona ideal → terus belok kanan memutari
-                print(f"Orbit: orbiting right ({black_ratio:.2f}) → Steer RIGHT")
+                print(f"Orbit: orbiting ({black_ratio:.2f}) → Steer RIGHT")
                 steering = PWM_RIGHT
         else:
-            # Kehilangan target saat orbit
-            print("Orbit: black lost → Steer RIGHT to find")
+            print("Orbit: black lost momentarily → Steer RIGHT")
             steering = PWM_RIGHT
+
+    elif nav_state == STATE_SHUTDOWN:
+        throttle_stop()
+        set_steering(PWM_CENTER)
 
     # ==============================
     # CONTROL OUTPUT
     # ==============================
 
-    set_steering(steering)
-    throttle_forward()
+    if nav_state != STATE_SHUTDOWN:
+        set_steering(steering)
+        throttle_forward()
 
     # ==============================
     # VISUALIZATION
     # ==============================
 
-    # Garis tengah
+    # Garis tengah frame
     cv2.line(annotated,
              (int(frame_center), 0), (int(frame_center), frame_height),
              (255, 255, 0), 2)
 
-    # Zona orbit (garis batas kiri & kanan zona ideal)
-    for ratio, color in [(ORBIT_KEEP_MIN, (0,200,0)), (ORBIT_KEEP_MAX, (0,0,200)), (ORBIT_RIGHT_ZONE, (0,165,255))]:
+    # Garis zona orbit
+    for ratio, color in [
+        (ORBIT_KEEP_MIN,   (0, 200,   0)),   # hijau  = batas kiri orbit
+        (ORBIT_KEEP_MAX,   (0,   0, 200)),   # biru   = batas kanan orbit
+        (ORBIT_RIGHT_ZONE, (0, 165, 255)),   # oranye = trigger orbit
+    ]:
         cx = int(frame_width * ratio)
         cv2.line(annotated, (cx, 0), (cx, frame_height), color, 1)
 
@@ -242,20 +281,55 @@ while True:
     color_map = {
         STATE_GATE       : (0, 255, 255),
         STATE_CIRC_START : (0, 165, 255),
-        STATE_CIRC_ORBIT : (0, 255, 0),
+        STATE_CIRC_ORBIT : (0, 255,   0),
+        STATE_SHUTDOWN   : (0,   0, 255),
     }
     cv2.putText(annotated, f"STATE: {nav_state}",
                 (10, 30), cv2.FONT_HERSHEY_SIMPLEX,
-                0.9, color_map.get(nav_state, (255,255,255)), 2)
+                0.9, color_map.get(nav_state, (255, 255, 255)), 2)
 
+    # Info gate terdekat
+    if gate_visible:
+        cv2.putText(annotated,
+                    f"Gate: red={int(red_distance)}cm  green={int(green_distance)}cm",
+                    (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+
+    # Info bola hitam
     if black_ratio is not None:
-        cv2.putText(annotated, f"Black X: {black_ratio:.2f}  Dist: {int(black_distance)}cm",
-                    (10, 60), cv2.FONT_HERSHEY_SIMPLEX,
-                    0.7, (200, 200, 200), 2)
+        cv2.putText(annotated,
+                    f"Black X: {black_ratio:.2f}  Dist: {int(black_distance)}cm",
+                    (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (200, 200, 200), 2)
+
+    # Countdown warning
+    if time_since_detection > 1.0 and nav_state != STATE_SHUTDOWN:
+        remaining = timeout_limit - time_since_detection
+        cv2.putText(annotated, f"No detection: {remaining:.1f}s",
+                    (10, 120), cv2.FONT_HERSHEY_SIMPLEX,
+                    0.7, (0, 50, 255), 2)
+
+    # Orbit confirm counter
+    if nav_state == STATE_CIRC_START and orbit_confirm_count > 0:
+        cv2.putText(annotated,
+                    f"Orbit confirm: {orbit_confirm_count}/{ORBIT_CONFIRM_NEEDED}",
+                    (10, 150), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 200, 255), 2)
+
+    # Pesan shutdown
+    if nav_state == STATE_SHUTDOWN:
+        cv2.putText(annotated, "!! SHUTDOWN: NO DETECTION !!",
+                    (int(frame_width * 0.05), frame_height // 2),
+                    cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 3)
+
+    # ==============================
+    # SINGLE imshow
+    # ==============================
 
     cv2.imshow("Naval Cam", annotated)
 
     if cv2.waitKey(1) & 0xFF == ord('q'):
+        break
+
+    if nav_state == STATE_SHUTDOWN:
+        cv2.waitKey(1500)
         break
 
 # ==============================
