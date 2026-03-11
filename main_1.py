@@ -8,7 +8,7 @@ from dronekit import connect
 
 print("Connecting to vehicle...")
 
-vehicle = connect('127.0.0.1:14550', wait_ready=True)
+vehicle = connect('tcp:127.0.0.1:5762', wait_ready=True)
 
 print("Connected!")
 
@@ -22,7 +22,7 @@ model = YOLO("best.pt")
 # CAMERA
 # ==========================
 
-cap = cv2.VideoCapture("http://192.168.1.5:8080/video")
+cap = cv2.VideoCapture(0)
 
 FRAME_CENTER_TOLERANCE = 40
 
