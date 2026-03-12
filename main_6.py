@@ -27,7 +27,7 @@ model = YOLO("best.pt")
 # CAMERA SETUP
 # ==============================
 
-cap = cv2.VideoCapture(0)
+cap = cv2.VideoCapture(1)
 
 # ==============================
 # PARAMETERS
@@ -47,7 +47,7 @@ PWM_LEFT   = 1400
 PWM_CENTER = 1500
 PWM_RIGHT  = 1600
 
-NO_DETECTION_TIMEOUT       = 5.0
+NO_DETECTION_TIMEOUT       = 60.0
 NO_DETECTION_ORBIT_TIMEOUT = 10.0
 ORBIT_CONFIRM_NEEDED       = 5
 
