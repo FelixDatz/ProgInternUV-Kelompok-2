@@ -2,8 +2,7 @@ import cv2
 import numpy as np
 import time
 import collections
-from dronekit import connect, VehicleMode
-from ultralytics import YOLO
+
 
 # --- 1. FIX COMPATIBILITY (DARI KODE SENIOR) ---
 try:
@@ -12,10 +11,14 @@ try:
 except:
     pass
 
+from dronekit import connect, VehicleMode
+from ultralytics import YOLO
+
 # --- 2. SETUP KONEKSI & SISTEM ---
 print("Menghubungkan ke kapal...")
 # Menggunakan koneksi TCP untuk simulasi
-vehicle = connect('tcp:127.0.0.1:5762', wait_ready=True)
+# vehicle = connect('tcp:127.0.0.1:5762', wait_ready=True)
+vehicle = connect('/dev/ttyACM0', wait_ready=True)
 
 def prepare_vehicle():
     """Fungsi Arming otomatis agar tidak pusing klik di Mission Planner"""
@@ -84,14 +87,10 @@ try:
         throttle = 1700 # Kecepatan jelajah
 
         # KONDISI 1: ADA BOLA HITAM (Prioritas Utama - Memutari Kanan)
-        if black_x is not None:
-            i_hilang = 0
-            steer = 1700 # Belok tajam kanan untuk memutari
-            perintah_terakhir = "kanan"
-            status = "MEMUTARI OBSTACLE"
+        
 
         # KONDISI 2: ADA GAWANG LENGKAP (Merah & Hijau)
-        elif red_x is not None and green_x is not None:
+        if red_x is not None and green_x is not None:
             i_hilang = 0
             path_center = (red_x + green_x) / 2
             
@@ -127,6 +126,12 @@ try:
             else:
                 steer = 1500
             status = "KOREKSI MERAH (TIANG KIRI)"
+
+        elif black_x is not None:
+            i_hilang = 0
+            steer = 1700 # Belok tajam kanan untuk memutari
+            perintah_terakhir = "kanan"
+            status = "MEMUTARI OBSTACLE"
 
         # KONDISI 5: TIDAK ADA TARGET (Insting Mencari)
         else:
