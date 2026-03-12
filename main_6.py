@@ -274,6 +274,10 @@ while True:
 
     gate_visible  = (red_x is not None and green_x is not None)
     obstacle_near = (black_x is not None and black_distance < OBSTACLE_DISTANCE_THRESHOLD)
+
+    # [BARU] True jika HANYA black yang terdeteksi, tanpa red/green sama sekali
+    only_black    = (black_x is not None and red_x is None and green_x is None)
+
     black_ratio   = (black_x / frame_width) if black_x is not None else None
 
     timeout_limit = NO_DETECTION_ORBIT_TIMEOUT if nav_state == STATE_CIRC_ORBIT else NO_DETECTION_TIMEOUT
@@ -283,10 +287,17 @@ while True:
         print(f">> STATE: SHUTDOWN (no detection for {time_since_detection:.1f}s)")
 
     elif nav_state == STATE_GATE:
-        if obstacle_near and not gate_visible:
+        # Masuk CIRC_START jika:
+        #   1. Black terlalu dekat (obstacle_near), ATAU
+        #   2. Hanya black yang terdeteksi tanpa red/green (only_black)
+        # Kedua kondisi tidak memerlukan gate visible
+        if (obstacle_near or only_black) and not gate_visible:
             orbit_confirm_count = 0
             nav_state = STATE_CIRC_START
-            print(">> STATE: CIRC_START (obstacle detected, turning left)")
+            if only_black and not obstacle_near:
+                print(">> STATE: CIRC_START (only black detected, no gate — no distance check)")
+            else:
+                print(">> STATE: CIRC_START (obstacle too close, turning left)")
 
     elif nav_state == STATE_CIRC_START:
         if black_ratio is not None and black_ratio >= ORBIT_RIGHT_ZONE:
@@ -418,6 +429,12 @@ while True:
         cv2.putText(annotated,
                     f"Black X: {black_ratio:.2f}  Dist: {int(black_distance)}cm",
                     (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (200, 200, 200), 2)
+
+    # [BARU] Label khusus jika only_black aktif
+    if only_black and nav_state in (STATE_CIRC_START, STATE_CIRC_ORBIT):
+        cv2.putText(annotated, "ONLY BLACK — orbit mode",
+                    (10, 175), cv2.FONT_HERSHEY_SIMPLEX,
+                    0.7, (0, 165, 255), 2)
 
     if time_since_detection > 1.0 and nav_state != STATE_SHUTDOWN:
         remaining = timeout_limit - time_since_detection
